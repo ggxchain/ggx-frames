@@ -23,11 +23,10 @@ pub mod pallet {
             TransactionValidityError, ValidTransaction,
         },
     };
+    use sp_std::convert::TryInto;
     use sp_std::fmt::Debug;
     use sp_std::marker::PhantomData;
     use sp_std::prelude::*;
-    use sp_std::convert::TryInto;
-
 
     #[pallet::config]
     pub trait Config: frame_system::Config {
@@ -93,7 +92,10 @@ pub mod pallet {
             new_account: T::AccountId,
         ) -> DispatchResultWithPostInfo {
             T::ValidateOrigin::ensure_origin(origin)?;
-            ensure!(!<AllowedAccounts<T>>::contains_key(&new_account), Error::<T>::Duplicate);
+            ensure!(
+                !<AllowedAccounts<T>>::contains_key(&new_account),
+                Error::<T>::Duplicate
+            );
 
             <AllowedAccounts<T>>::insert(&new_account, ());
             Self::deposit_event(Event::AccountAllowed(new_account));
@@ -109,7 +111,10 @@ pub mod pallet {
             account_to_remove: T::AccountId,
         ) -> DispatchResult {
             T::ValidateOrigin::ensure_origin(origin)?;
-            ensure!(<AllowedAccounts<T>>::contains_key(&account_to_remove), Error::<T>::AccountNotAdded);
+            ensure!(
+                <AllowedAccounts<T>>::contains_key(&account_to_remove),
+                Error::<T>::AccountNotAdded
+            );
 
             <AllowedAccounts<T>>::remove(&account_to_remove);
 

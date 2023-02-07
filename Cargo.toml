@@ -5,10 +5,9 @@ members = [
 
 [workspace.dependencies]
 # General purpose dependencies
-parity-scale-codec = { version = '3.0.0' }
-scale-info = { version = "2.1.1" }
-serde = { version = '1.0.101' }
-arrayvec = "0.7.2"
+parity-scale-codec = { version = '3.0.0', default-features = false }
+scale-info = { version = "2.1.1", default-features = false }
+serde = { version = '1.0.101', default-features = false }
 
 # Substrate dependencies
 sp-std = { version = "5.0.0", default-features = false, git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v0.9.35" }

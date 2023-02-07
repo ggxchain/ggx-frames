@@ -29,5 +29,5 @@ frame-support = { workspace = true, default-features = false }
 frame-system = { workspace = true, default-features = false }
 
 [dev-dependencies]
-arrayvec = { workspace = true }
+arrayvec = "0.7.2"
 sp-io = { workspace = true, default-features = false }
