@@ -53,14 +53,11 @@ pub mod pallet {
     pub enum Event<T: Config> {
         // When a new account is added to the allow-list.
         AccountAllowed(T::AccountId),
-        // When an account is removed from the allow-list.
-        AccountRemoved(T::AccountId),
     }
 
     #[pallet::error]
     pub enum Error<T> {
         Duplicate,
-        AccountNotAdded,
     }
 
     #[pallet::hooks]
@@ -180,7 +177,7 @@ pub mod pallet {
             info: &DispatchInfoOf<Self::Call>,
             _len: usize,
         ) -> TransactionValidity {
-            if T::CallsToFilter::matches(call) && !<AllowedAccounts<T>>::contains_key(who   ) {
+            if T::CallsToFilter::matches(call) && !<AllowedAccounts<T>>::contains_key(who) {
                 Err(InvalidTransaction::BadSigner.into())
             } else {
                 Ok(ValidTransaction {
