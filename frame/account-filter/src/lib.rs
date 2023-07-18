@@ -7,6 +7,10 @@
 
 pub use pallet::*;
 
+pub trait BlockCallMatcher<T: Config> {
+    fn matches(call: &<T as frame_system::Config>::RuntimeCall) -> bool;
+}
+
 #[frame_support::pallet]
 pub mod pallet {
 
@@ -32,6 +36,7 @@ pub mod pallet {
     pub trait Config: frame_system::Config {
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
         type ValidateOrigin: EnsureOrigin<Self::RuntimeOrigin>;
+        type CallsToFilter: BlockCallMatcher<Self>;
     }
 
     #[pallet::pallet]
@@ -87,6 +92,7 @@ pub mod pallet {
         /// Add a new account to the allow-list.
         /// Can only be called by the defined origin.
         #[pallet::weight(0)]
+        #[pallet::call_index(0)]
         pub fn add_account(
             origin: OriginFor<T>,
             new_account: T::AccountId,
@@ -102,26 +108,6 @@ pub mod pallet {
 
             Ok(().into())
         }
-
-        /// Remove an account from the allow-list.
-        /// Can only be called by the defined origin.
-        #[pallet::weight(0)]
-        pub fn remove_account(
-            origin: OriginFor<T>,
-            account_to_remove: T::AccountId,
-        ) -> DispatchResult {
-            T::ValidateOrigin::ensure_origin(origin)?;
-            ensure!(
-                <AllowedAccounts<T>>::contains_key(&account_to_remove),
-                Error::<T>::AccountNotAdded
-            );
-
-            <AllowedAccounts<T>>::remove(&account_to_remove);
-
-            Self::deposit_event(Event::AccountRemoved(account_to_remove));
-
-            Ok(())
-        }
     }
 
     impl<T: Config> Pallet<T> {
@@ -133,7 +119,6 @@ pub mod pallet {
             }
         }
     }
-
     /// The following section implements the `SignedExtension` trait
     /// for the `AllowAccount` type.
     /// `SignedExtension` is being used here to filter out the not allowed accounts
@@ -191,19 +176,19 @@ pub mod pallet {
         fn validate(
             &self,
             who: &Self::AccountId,
-            _call: &Self::Call,
+            call: &Self::Call,
             info: &DispatchInfoOf<Self::Call>,
             _len: usize,
         ) -> TransactionValidity {
-            if <pallet::AllowedAccounts<T>>::contains_key(who) {
+            if T::CallsToFilter::matches(call) && !<AllowedAccounts<T>>::contains_key(who   ) {
+                Err(InvalidTransaction::BadSigner.into())
+            } else {
                 Ok(ValidTransaction {
                     priority: info.weight.ref_time(),
                     longevity: TransactionLongevity::max_value(),
                     propagate: true,
                     ..Default::default()
                 })
-            } else {
-                Err(InvalidTransaction::BadSigner.into())
             }
         }
 

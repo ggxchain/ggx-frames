@@ -1,7 +1,5 @@
 [workspace]
-members = [
-    "frame/account-filter"
-]
+members = ["frame/account-filter"]
 
 [workspace.dependencies]
 # General purpose dependencies
