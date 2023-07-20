@@ -41,7 +41,6 @@ pub mod pallet {
     }
 
     #[pallet::pallet]
-    #[pallet::generate_store(pub(super) trait Store)]
     pub struct Pallet<T>(_);
 
     // The allowed accounts.
@@ -135,7 +134,7 @@ pub mod pallet {
                 <AllowedAccounts<T>>::insert(&new_account, ());
                 let voted_for = <Votes<T>>::drain_prefix(&new_account)
                     .map(|(k, _)| k)
-                    .chain(std::iter::once(account.clone()))
+                    .chain(sp_std::iter::once(account.clone()))
                     .collect();
 
                 Self::deposit_event(Event::AccountVoted {
