@@ -1,13 +1,13 @@
 use substrate_account_filter as account_filter;
 
 use frame_support::{parameter_types, traits::GenesisBuild};
-use frame_system::EnsureRoot;
 
 use sp_core::H256;
 use sp_runtime::{
     impl_opaque_keys,
     testing::{Header, UintAuthorityId},
     traits::{BlakeTwo256, IdentityLookup},
+    Percent,
 };
 use sp_std::convert::{TryFrom, TryInto};
 
@@ -78,16 +78,21 @@ pub struct CallBlocker {}
 impl account_filter::BlockCallMatcher<Test> for CallBlocker {
     fn matches(call: &<Test as frame_system::Config>::RuntimeCall) -> bool {
         match call {
-			RuntimeCall::System(frame_system::Call::set_heap_pages{..}) => true,
-			_ => false,
-		}
+            RuntimeCall::System(frame_system::Call::set_heap_pages { .. }) => true,
+            _ => false,
+        }
     }
 }
 
+parameter_types! {
+    // 2 out 3
+    pub VotesToAllow: Percent = Percent::from_rational(2u32, 3u32);
+}
+
 impl account_filter::Config for Test {
-    type ValidateOrigin = EnsureRoot<Self::AccountId>;
     type RuntimeEvent = RuntimeEvent;
     type CallsToFilter = CallBlocker;
+    type VotesToAllow = VotesToAllow;
 }
 
 parameter_types! {
@@ -99,7 +104,7 @@ pub fn test() -> sp_io::TestExternalities {
         .build_storage::<Test>()
         .unwrap();
     account_filter::GenesisConfig::<Test> {
-        allowed_accounts: vec![(1, ()).into(), (2, ()).into()],
+        allowed_accounts: vec![(1, ()), (2, ()), (3, ())],
     }
     .assimilate_storage(&mut t)
     .unwrap();
