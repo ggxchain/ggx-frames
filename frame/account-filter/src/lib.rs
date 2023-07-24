@@ -45,8 +45,12 @@ pub mod pallet {
 
     // The allowed accounts.
     #[pallet::storage]
+    #[pallet::getter(fn allowed_accounts_list)]
+    pub type AllowedAccountList<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, ()>;
+
+    #[pallet::storage]
     #[pallet::getter(fn allowed_accounts)]
-    pub type AllowedAccounts<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, ()>;
+    pub type AllowedAccounts<T: Config> = StorageValue<_, u128, ValueQuery>;
 
     // Voting process for the allow-list.
     // The key is the account that is being voted for. The value is the account that is voting for.
@@ -54,6 +58,10 @@ pub mod pallet {
     #[pallet::getter(fn votes)]
     pub type Votes<T: Config> =
         StorageDoubleMap<_, Blake2_128Concat, T::AccountId, Blake2_128Concat, T::AccountId, ()>;
+
+    #[pallet::storage]
+    #[pallet::getter(fn votes_for_account)]
+    pub type VotesForAccount<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, u128>;
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -74,6 +82,8 @@ pub mod pallet {
         AlreadyAllowed,
         DuplicateVote,
         NotAllowedToVote,
+        VotesCounterOverflow,
+        AllowedAccountsOverflow,
     }
 
     #[pallet::hooks]
@@ -112,11 +122,11 @@ pub mod pallet {
         ) -> DispatchResultWithPostInfo {
             let account = ensure_signed(origin)?;
             ensure!(
-                <AllowedAccounts<T>>::contains_key(&account),
+                <AllowedAccountList<T>>::contains_key(&account),
                 Error::<T>::NotAllowedToVote
             );
             ensure!(
-                !<AllowedAccounts<T>>::contains_key(&new_account),
+                !<AllowedAccountList<T>>::contains_key(&new_account),
                 Error::<T>::AlreadyAllowed
             );
             ensure!(
@@ -125,13 +135,23 @@ pub mod pallet {
             );
 
             // Check if the new account has enough votes to be added to the allow-list.
-            let votes_for = Votes::<T>::iter_prefix(&new_account).count() + 1;
-            let votes_required = AllowedAccounts::<T>::iter().count();
+            let votes_for = Self::votes_for_account(&new_account)
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or(Error::<T>::VotesCounterOverflow)?; // Check for overflow.
+            let votes_required = AllowedAccounts::<T>::get();
             let percent = Percent::from_rational(votes_for, votes_required);
 
             if percent >= T::VotesToAllow::get() {
                 // Enough votes to add the new account to the allow-list.
-                <AllowedAccounts<T>>::insert(&new_account, ());
+                <AllowedAccountList<T>>::insert(&new_account, ());
+                <AllowedAccounts<T>>::try_mutate(|v| -> Result<(), Error<T>> {
+                    *v = v
+                        .checked_add(1)
+                        .ok_or(Error::<T>::AllowedAccountsOverflow)?;
+                    Ok(())
+                })?;
+                <VotesForAccount<T>>::remove(&new_account);
                 let voted_for = <Votes<T>>::drain_prefix(&new_account)
                     .map(|(k, _)| k)
                     .chain(sp_std::iter::once(account.clone()))
@@ -148,6 +168,7 @@ pub mod pallet {
             } else {
                 // Vote for the new account.
                 <Votes<T>>::insert(&new_account, &account, ());
+                <VotesForAccount<T>>::insert(&new_account, votes_for);
                 Self::deposit_event(Event::AccountVoted {
                     referrer: account,
                     referee: new_account,
@@ -162,8 +183,9 @@ pub mod pallet {
         fn initialize_allowed_accounts(allowed_accounts: &[(T::AccountId, ())]) {
             if !allowed_accounts.is_empty() {
                 for (account, extrinsics) in allowed_accounts.iter() {
-                    <AllowedAccounts<T>>::insert(account, extrinsics);
+                    <AllowedAccountList<T>>::insert(account, extrinsics);
                 }
+                <AllowedAccounts<T>>::put(allowed_accounts.len() as u128);
             }
         }
     }
@@ -228,16 +250,16 @@ pub mod pallet {
             info: &DispatchInfoOf<Self::Call>,
             _len: usize,
         ) -> TransactionValidity {
-            if T::CallsToFilter::matches(call) && !<AllowedAccounts<T>>::contains_key(who) {
-                Err(InvalidTransaction::BadSigner.into())
-            } else {
-                Ok(ValidTransaction {
-                    priority: info.weight.ref_time(),
-                    longevity: TransactionLongevity::max_value(),
-                    propagate: true,
-                    ..Default::default()
-                })
-            }
+            ensure!(
+                !T::CallsToFilter::matches(call) || <AllowedAccountList<T>>::contains_key(who),
+                InvalidTransaction::BadSigner
+            );
+            Ok(ValidTransaction {
+                priority: info.weight.ref_time(),
+                longevity: TransactionLongevity::max_value(),
+                propagate: true,
+                ..Default::default()
+            })
         }
 
         fn pre_dispatch(
