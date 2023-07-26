@@ -8,15 +8,18 @@ use substrate_account_filter::{Error, Event};
 #[test]
 fn default_test() {
     test().execute_with(|| {
-        assert!(AccountFilter::allowed_accounts(1u64).is_some());
-        assert!(AccountFilter::allowed_accounts(2u64).is_some());
+        assert!(AccountFilter::allowed_accounts_list(1u64).is_some());
+        assert!(AccountFilter::allowed_accounts_list(2u64).is_some());
+        assert!(AccountFilter::allowed_accounts_list(3u64).is_some());
+
+        assert_eq!(AccountFilter::allowed_accounts(), 3u128);
     });
 }
 
 #[test]
 fn one_vote_is_not_enough_to_add_account() {
     test().execute_with(|| {
-        assert_eq!(AccountFilter::allowed_accounts(4u64), None);
+        assert_eq!(AccountFilter::allowed_accounts_list(4u64), None);
         assert_ok!(AccountFilter::vote_for_account(RuntimeOrigin::signed(1), 4));
         mock::System::assert_has_event(
             Event::AccountVoted {
@@ -26,14 +29,15 @@ fn one_vote_is_not_enough_to_add_account() {
             .into(),
         );
 
-        assert!(AccountFilter::allowed_accounts(4u64).is_none());
+        assert_eq!(AccountFilter::votes_for_account(4u64).unwrap(), 1u128);
+        assert!(AccountFilter::allowed_accounts_list(4u64).is_none());
     });
 }
 
 #[test]
 fn test_adding_to_allowlist() {
     test().execute_with(|| {
-        assert_eq!(AccountFilter::allowed_accounts(4u64), None);
+        assert_eq!(AccountFilter::allowed_accounts_list(4u64), None);
         assert_ok!(AccountFilter::vote_for_account(RuntimeOrigin::signed(1), 4));
         mock::System::assert_has_event(
             Event::AccountVoted {
@@ -42,8 +46,8 @@ fn test_adding_to_allowlist() {
             }
             .into(),
         );
-
-        assert!(AccountFilter::allowed_accounts(4u64).is_none());
+        assert_eq!(AccountFilter::votes_for_account(4u64).unwrap(), 1u128);
+        assert!(AccountFilter::allowed_accounts_list(4u64).is_none());
 
         assert_ok!(AccountFilter::vote_for_account(RuntimeOrigin::signed(2), 4));
         mock::System::assert_has_event(
@@ -62,7 +66,8 @@ fn test_adding_to_allowlist() {
             .into(),
         );
 
-        assert!(AccountFilter::allowed_accounts(4u64).is_some());
+        assert!(AccountFilter::allowed_accounts_list(4u64).is_some());
+        assert_eq!(AccountFilter::allowed_accounts(), 4u128);
     });
 }
 
@@ -75,10 +80,10 @@ fn complexity_growth_as_allowed_account_grow() {
             let account_to_add = 4 + i;
             let accounts = initial_accounts + i;
             assert_eq!(
-                accounts as usize,
-                substrate_account_filter::AllowedAccounts::<Test>::iter().count()
+                accounts as u128,
+                substrate_account_filter::AllowedAccounts::<Test>::get(),
             );
-            assert_eq!(AccountFilter::allowed_accounts(account_to_add), None);
+            assert_eq!(AccountFilter::allowed_accounts_list(account_to_add), None);
             let votes_required = VotesToAllow::get().mul_ceil(accounts);
 
             for j in 0..votes_required {
@@ -97,7 +102,7 @@ fn complexity_growth_as_allowed_account_grow() {
                 );
             }
 
-            assert!(AccountFilter::allowed_accounts(account_to_add).is_some());
+            assert!(AccountFilter::allowed_accounts_list(account_to_add).is_some());
         }
     });
 }
@@ -115,7 +120,7 @@ fn failure_to_vote_with_wrong_origin() {
 #[test]
 fn duplicate_adding_failure() {
     test().execute_with(|| {
-        assert!(AccountFilter::allowed_accounts(2u64).is_some());
+        assert!(AccountFilter::allowed_accounts_list(2u64).is_some());
         assert_noop!(
             AccountFilter::vote_for_account(RuntimeOrigin::signed(1), 2u64),
             Error::<Test>::AlreadyAllowed
@@ -126,7 +131,7 @@ fn duplicate_adding_failure() {
 #[test]
 fn duplicate_voting_failure() {
     test().execute_with(|| {
-        assert_eq!(AccountFilter::allowed_accounts(4u64), None);
+        assert_eq!(AccountFilter::allowed_accounts_list(4u64), None);
         assert_ok!(AccountFilter::vote_for_account(RuntimeOrigin::signed(1), 4));
         assert_noop!(
             AccountFilter::vote_for_account(RuntimeOrigin::signed(1), 4),
@@ -140,7 +145,7 @@ fn send_transfer_success() {
     test().execute_with(|| {
         let info = DispatchInfo::default();
         let len = 0_usize;
-        assert!(AccountFilter::allowed_accounts(2u64).is_some());
+        assert!(AccountFilter::allowed_accounts_list(2u64).is_some());
         assert_ok!(
             substrate_account_filter::AllowAccount::<Test>::new().validate(
                 &2,
@@ -158,7 +163,7 @@ fn send_transfer_failure() {
     ext.execute_with(|| {
         let info = DispatchInfo::default();
         let len = 0_usize;
-        assert_eq!(AccountFilter::allowed_accounts(4u64), None);
+        assert_eq!(AccountFilter::allowed_accounts_list(4u64), None);
         assert_noop!(
             substrate_account_filter::AllowAccount::<Test>::new().validate(
                 &4,
@@ -177,7 +182,7 @@ fn send_success_after_adding_account() {
     ext.execute_with(|| {
         let info = DispatchInfo::default();
         let len = 0_usize;
-        assert_eq!(AccountFilter::allowed_accounts(4u64), None);
+        assert_eq!(AccountFilter::allowed_accounts_list(4u64), None);
         assert_noop!(
             substrate_account_filter::AllowAccount::<Test>::new().validate(
                 &4,
@@ -207,7 +212,7 @@ fn not_blocked_call_should_be_usable_by_any() {
     ext.execute_with(|| {
         let info = DispatchInfo::default();
         let len = 0_usize;
-        assert_eq!(AccountFilter::allowed_accounts(4u64), None);
+        assert_eq!(AccountFilter::allowed_accounts_list(4u64), None);
 
         let call = mock::RuntimeCall::System(frame_system::Call::remark { remark: vec![] });
         assert_ok!(
@@ -217,7 +222,7 @@ fn not_blocked_call_should_be_usable_by_any() {
         // Still can after adding account.
         assert_ok!(AccountFilter::vote_for_account(RuntimeOrigin::signed(1), 4));
         assert_ok!(AccountFilter::vote_for_account(RuntimeOrigin::signed(2), 4));
-        assert!(AccountFilter::allowed_accounts(4u64).is_some());
+        assert!(AccountFilter::allowed_accounts_list(4u64).is_some());
         assert_ok!(
             substrate_account_filter::AllowAccount::<Test>::new().validate(&4, &call, &info, len)
         );

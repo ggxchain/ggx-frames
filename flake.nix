@@ -1,5 +1,5 @@
 {
-  description = "Webb DKG development environment";
+  description = "GGX development environment";
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";

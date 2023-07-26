@@ -3,7 +3,7 @@ name = "substrate-account-filter"
 version = "4.0.0"
 authors = [
     "Gautam Dhameja <quasijatt@outlook.com>",
-    "Artur-Yurii Korchynskyi <artur.yurii.korchynskyi@gmail.com>",
+    "Artur-Yurii Korchynskyi <artur.yurii.korchynskyi@ggxchain.io>",
 ]
 edition = "2018"
 license = "Apache-2.0"
