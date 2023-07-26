@@ -7,6 +7,10 @@
 
 pub use pallet::*;
 
+pub trait BlockCallMatcher<T: Config> {
+    fn matches(call: &<T as frame_system::Config>::RuntimeCall) -> bool;
+}
+
 #[frame_support::pallet]
 pub mod pallet {
 
@@ -16,6 +20,7 @@ pub mod pallet {
     use frame_system::pallet_prelude::*;
     use parity_scale_codec::{Decode, Encode};
     use scale_info::TypeInfo;
+    use sp_runtime::Percent;
     use sp_runtime::{
         traits::{DispatchInfoOf, Dispatchable, SignedExtension},
         transaction_validity::{
@@ -31,31 +36,54 @@ pub mod pallet {
     #[pallet::config]
     pub trait Config: frame_system::Config {
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
-        type ValidateOrigin: EnsureOrigin<Self::RuntimeOrigin>;
+        type CallsToFilter: BlockCallMatcher<Self>;
+        type VotesToAllow: Get<Percent>;
     }
 
     #[pallet::pallet]
-    #[pallet::generate_store(pub(super) trait Store)]
     pub struct Pallet<T>(_);
 
-    // The pallet's runtime storage items.
+    // The allowed accounts.
+    #[pallet::storage]
+    #[pallet::getter(fn allowed_accounts_list)]
+    pub type AllowedAccountList<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, ()>;
+
     #[pallet::storage]
     #[pallet::getter(fn allowed_accounts)]
-    pub type AllowedAccounts<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, ()>;
+    pub type AllowedAccounts<T: Config> = StorageValue<_, u128, ValueQuery>;
+
+    // Voting process for the allow-list.
+    // The key is the account that is being voted for. The value is the account that is voting for.
+    #[pallet::storage]
+    #[pallet::getter(fn votes)]
+    pub type Votes<T: Config> =
+        StorageDoubleMap<_, Blake2_128Concat, T::AccountId, Blake2_128Concat, T::AccountId, ()>;
+
+    #[pallet::storage]
+    #[pallet::getter(fn votes_for_account)]
+    pub type VotesForAccount<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, u128>;
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
         // When a new account is added to the allow-list.
-        AccountAllowed(T::AccountId),
-        // When an account is removed from the allow-list.
-        AccountRemoved(T::AccountId),
+        AccountAllowed {
+            account: T::AccountId,
+            voted_for: Vec<T::AccountId>,
+        },
+        AccountVoted {
+            referrer: T::AccountId,
+            referee: T::AccountId,
+        },
     }
 
     #[pallet::error]
     pub enum Error<T> {
-        Duplicate,
-        AccountNotAdded,
+        AlreadyAllowed,
+        DuplicateVote,
+        NotAllowedToVote,
+        VotesCounterOverflow,
+        AllowedAccountsOverflow,
     }
 
     #[pallet::hooks]
@@ -87,40 +115,67 @@ pub mod pallet {
         /// Add a new account to the allow-list.
         /// Can only be called by the defined origin.
         #[pallet::weight(0)]
-        pub fn add_account(
+        #[pallet::call_index(0)]
+        pub fn vote_for_account(
             origin: OriginFor<T>,
             new_account: T::AccountId,
         ) -> DispatchResultWithPostInfo {
-            T::ValidateOrigin::ensure_origin(origin)?;
+            let account = ensure_signed(origin)?;
             ensure!(
-                !<AllowedAccounts<T>>::contains_key(&new_account),
-                Error::<T>::Duplicate
+                <AllowedAccountList<T>>::contains_key(&account),
+                Error::<T>::NotAllowedToVote
+            );
+            ensure!(
+                !<AllowedAccountList<T>>::contains_key(&new_account),
+                Error::<T>::AlreadyAllowed
+            );
+            ensure!(
+                !<Votes<T>>::contains_key(&new_account, &account),
+                Error::<T>::DuplicateVote
             );
 
-            <AllowedAccounts<T>>::insert(&new_account, ());
-            Self::deposit_event(Event::AccountAllowed(new_account));
+            // Check if the new account has enough votes to be added to the allow-list.
+            let votes_for = Self::votes_for_account(&new_account)
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or(Error::<T>::VotesCounterOverflow)?; // Check for overflow.
+            let votes_required = AllowedAccounts::<T>::get();
+            let percent = Percent::from_rational(votes_for, votes_required);
+
+            if percent >= T::VotesToAllow::get() {
+                // Enough votes to add the new account to the allow-list.
+                <AllowedAccountList<T>>::insert(&new_account, ());
+                <AllowedAccounts<T>>::try_mutate(|v| -> Result<(), Error<T>> {
+                    *v = v
+                        .checked_add(1)
+                        .ok_or(Error::<T>::AllowedAccountsOverflow)?;
+                    Ok(())
+                })?;
+                <VotesForAccount<T>>::remove(&new_account);
+                let voted_for = <Votes<T>>::drain_prefix(&new_account)
+                    .map(|(k, _)| k)
+                    .chain(sp_std::iter::once(account.clone()))
+                    .collect();
+
+                Self::deposit_event(Event::AccountVoted {
+                    referrer: account,
+                    referee: new_account.clone(),
+                });
+                Self::deposit_event(Event::AccountAllowed {
+                    account: new_account,
+                    voted_for,
+                });
+            } else {
+                // Vote for the new account.
+                <Votes<T>>::insert(&new_account, &account, ());
+                <VotesForAccount<T>>::insert(&new_account, votes_for);
+                Self::deposit_event(Event::AccountVoted {
+                    referrer: account,
+                    referee: new_account,
+                });
+            }
 
             Ok(().into())
-        }
-
-        /// Remove an account from the allow-list.
-        /// Can only be called by the defined origin.
-        #[pallet::weight(0)]
-        pub fn remove_account(
-            origin: OriginFor<T>,
-            account_to_remove: T::AccountId,
-        ) -> DispatchResult {
-            T::ValidateOrigin::ensure_origin(origin)?;
-            ensure!(
-                <AllowedAccounts<T>>::contains_key(&account_to_remove),
-                Error::<T>::AccountNotAdded
-            );
-
-            <AllowedAccounts<T>>::remove(&account_to_remove);
-
-            Self::deposit_event(Event::AccountRemoved(account_to_remove));
-
-            Ok(())
         }
     }
 
@@ -128,18 +183,18 @@ pub mod pallet {
         fn initialize_allowed_accounts(allowed_accounts: &[(T::AccountId, ())]) {
             if !allowed_accounts.is_empty() {
                 for (account, extrinsics) in allowed_accounts.iter() {
-                    <AllowedAccounts<T>>::insert(account, extrinsics);
+                    <AllowedAccountList<T>>::insert(account, extrinsics);
                 }
+                <AllowedAccounts<T>>::put(allowed_accounts.len() as u128);
             }
         }
     }
-
     /// The following section implements the `SignedExtension` trait
     /// for the `AllowAccount` type.
     /// `SignedExtension` is being used here to filter out the not allowed accounts
-    /// when they try to send extrinsics to the runtime.
+    /// when they try to send filtered extrinsics to the runtime.
     /// Inside the `validate` function of the `SignedExtension` trait,
-    /// we check if the sender (origin) of the extrinsic is part of the
+    /// we check for filtered extrinsics and if the sender (origin) of the extrinsic is part of the
     /// allow-list or not.
     /// The extrinsic will be rejected as invalid if the origin is not part
     /// of the allow-list.
@@ -185,26 +240,26 @@ pub mod pallet {
             Ok(())
         }
 
-        // Filter out the not allowed keys.
+        // Filter out the not allowed keys for predefined calls.
         // If the key is in the allow-list, return a valid transaction,
         // else return a custom error.
         fn validate(
             &self,
             who: &Self::AccountId,
-            _call: &Self::Call,
+            call: &Self::Call,
             info: &DispatchInfoOf<Self::Call>,
             _len: usize,
         ) -> TransactionValidity {
-            if <pallet::AllowedAccounts<T>>::contains_key(who) {
-                Ok(ValidTransaction {
-                    priority: info.weight.ref_time(),
-                    longevity: TransactionLongevity::max_value(),
-                    propagate: true,
-                    ..Default::default()
-                })
-            } else {
-                Err(InvalidTransaction::BadSigner.into())
-            }
+            ensure!(
+                !T::CallsToFilter::matches(call) || <AllowedAccountList<T>>::contains_key(who),
+                InvalidTransaction::BadSigner
+            );
+            Ok(ValidTransaction {
+                priority: info.weight.ref_time(),
+                longevity: TransactionLongevity::max_value(),
+                propagate: true,
+                ..Default::default()
+            })
         }
 
         fn pre_dispatch(
